@@ -1,8 +1,10 @@
+import httpx
 from openai import OpenAI
 
 client = OpenAI(
-    api_key="ollama",
-    base_url="http://127.0.0.1:8998/v1"
+    api_key="EMPTY",
+    base_url="http://127.0.0.1:8000/v1",
+    http_client=httpx.Client(trust_env=False)
 )
 stream = True
 conversation_history_origin = []
