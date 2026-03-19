@@ -4,3 +4,6 @@ website/
 docs-minimind/
 MiniMind2/
 .vscode
+dataset/minimind_dataset/
+wandb/
+checkpoints/
