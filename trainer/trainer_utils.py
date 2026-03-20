@@ -135,8 +135,11 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='model', save_d
     if from_weight!= 'none':
         moe_suffix = '_moe' if lm_config.use_moe else ''
         weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+        Logger(f'Loaded from: {weight_path}')
         weights = torch.load(weight_path, map_location=device)
         model.load_state_dict(weights, strict=False)
+    else:
+        Logger('Loaded from: none (training from scratch)')
 
     get_model_params(model, lm_config)
     Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
