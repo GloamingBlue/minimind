@@ -4,9 +4,16 @@ import os
 import json
 from tokenizers import decoders, models, pre_tokenizers, trainers, Tokenizer
 
-DATA_PATH = '../dataset/pretrain_hq.jsonl'
-TOKENIZER_DIR = '../model_learn_tokenizer/'
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+DATA_PATH = 'dataset/pretrain_hq.jsonl'
+TOKENIZER_DIR = 'model_learn_tokenizer/'
 VOCAB_SIZE = 6400
+
+
+def resolve_project_path(path):
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(os.path.join(PROJECT_ROOT, path))
 
 def get_texts(data_path):
     with open(data_path, 'r', encoding='utf-8') as f:
@@ -122,5 +129,5 @@ def eval_tokenizer(tokenizer_dir):
             token_cache = []
 
 if __name__ == '__main__':
-    train_tokenizer(DATA_PATH, TOKENIZER_DIR, VOCAB_SIZE)
-    eval_tokenizer(TOKENIZER_DIR)
+    train_tokenizer(resolve_project_path(DATA_PATH), resolve_project_path(TOKENIZER_DIR), VOCAB_SIZE)
+    eval_tokenizer(resolve_project_path(TOKENIZER_DIR))

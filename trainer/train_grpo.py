@@ -19,7 +19,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoModel
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, resolve_project_path
 
 warnings.filterwarnings('ignore')
 
@@ -184,8 +184,8 @@ def grpo_train_epoch(epoch, loader, iters, ref_model, reward_model, reward_token
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
             torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler)
+            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
+                         epoch=epoch, step=step, wandb=wandb, save_dir='checkpoints', scheduler=scheduler)
             model.train()
             del state_dict
 
@@ -195,7 +195,7 @@ def grpo_train_epoch(epoch, loader, iters, ref_model, reward_model, reward_token
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind GRPO (Group Relative Policy Optimization)")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
+    parser.add_argument("--save_dir", type=str, default="out", help="模型保存目录")
     parser.add_argument('--save_weight', default='grpo', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=2, help="batch size")
@@ -212,7 +212,7 @@ if __name__ == "__main__":
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--max_seq_len', default=66, type=int, help="Prompt最大长度")
     parser.add_argument("--max_gen_len", type=int, default=1536, help="生成的最大长度")
-    parser.add_argument("--data_path", type=str, default="../dataset/rlaif-mini.jsonl", help="RLAIF数据路径")
+    parser.add_argument("--data_path", type=str, default="dataset/rlaif-mini.jsonl", help="RLAIF数据路径")
     parser.add_argument("--num_generations", type=int, default=8, help="每个prompt生成的样本数")
     parser.add_argument("--beta", type=float, default=0.02, help="KL惩罚系数")
     parser.add_argument("--reasoning", type=int, default=1, choices=[0, 1], help='推理模型类型（0=普通模型，1=推理模型）')
@@ -229,10 +229,12 @@ if __name__ == "__main__":
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
+    args.save_dir = resolve_project_path(args.save_dir)
+    args.data_path = resolve_project_path(args.data_path)
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
                                max_seq_len=args.max_seq_len + args.max_gen_len, use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
+    ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"

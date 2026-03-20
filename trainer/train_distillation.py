@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, resolve_project_path
 
 warnings.filterwarnings('ignore')
 
@@ -126,7 +126,7 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
             torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config_student, weight=args.save_weight, model=model, optimizer=optimizer, scaler=scaler, epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints')
+            lm_checkpoint(lm_config_student, weight=args.save_weight, model=model, optimizer=optimizer, scaler=scaler, epoch=epoch, step=step, wandb=wandb, save_dir='checkpoints')
             model.train()
             del state_dict
 
@@ -135,7 +135,7 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Knowledge Distillation")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
+    parser.add_argument("--save_dir", type=str, default="out", help="模型保存目录")
     parser.add_argument('--save_weight', default='full_dist', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=6, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=32, help="batch size")
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=100, help="模型保存间隔")
     parser.add_argument("--max_seq_len", type=int, default=340, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
-    parser.add_argument("--data_path", type=str, default="../dataset/sft_mini_512.jsonl", help="训练数据路径")
+    parser.add_argument("--data_path", type=str, default="dataset/sft_mini_512.jsonl", help="训练数据路径")
     parser.add_argument('--student_hidden_size', default=512, type=int, help="学生模型隐藏层维度")
     parser.add_argument('--student_num_layers', default=8, type=int, help="学生模型隐藏层数量")
     parser.add_argument('--teacher_hidden_size', default=768, type=int, help="教师模型隐藏层维度")
@@ -170,10 +170,12 @@ if __name__ == "__main__":
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
+    args.save_dir = resolve_project_path(args.save_dir)
+    args.data_path = resolve_project_path(args.data_path)
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config_student = MiniMindConfig(hidden_size=args.student_hidden_size, num_hidden_layers=args.student_num_layers, use_moe=bool(args.use_moe))
     lm_config_teacher = MiniMindConfig(hidden_size=args.teacher_hidden_size, num_hidden_layers=args.teacher_num_layers, use_moe=bool(args.use_moe))
-    ckp_data = lm_checkpoint(lm_config_student, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
+    ckp_data = lm_checkpoint(lm_config_student, weight=args.save_weight, save_dir='checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
