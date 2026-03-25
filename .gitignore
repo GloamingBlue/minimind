@@ -7,3 +7,4 @@ MiniMind2/
 dataset/minimind_dataset/
 wandb/
 checkpoints/
+internlm2-1_8b-reward/
