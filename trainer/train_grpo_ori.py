@@ -106,8 +106,7 @@ def grpo_train_epoch(epoch, loader, iters, ref_model, reward_model, reward_token
             model_for_gen = model.module if isinstance(model, DistributedDataParallel) else model
             outputs = model_for_gen.generate(
                 **prompt_inputs, max_new_tokens=args.max_gen_len, do_sample=True, temperature=0.8,
-                num_return_sequences=args.num_generations, pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id, repetition_penalty=args.repetition_penalty)  # [B*num_gen, P+R]
+                num_return_sequences=args.num_generations, pad_token_id=tokenizer.pad_token_id)  # [B*num_gen, P+R]
 
         completion_ids = outputs[:, prompt_inputs["input_ids"].size(1):]  # [B*num_gen, R]
         
@@ -216,7 +215,6 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, default="dataset/minimind_dataset/rlaif-mini.jsonl", help="RLAIF数据路径")
     parser.add_argument("--num_generations", type=int, default=8, help="每个prompt生成的样本数")
     parser.add_argument("--beta", type=float, default=0.02, help="KL惩罚系数")
-    parser.add_argument("--repetition_penalty", type=float, default=1.0, help="生成时重复惩罚系数")
     parser.add_argument("--reasoning", type=int, default=1, choices=[0, 1], help='推理模型类型（0=普通模型，1=推理模型）')
     parser.add_argument("--reward_model_path", type=str, default="internlm2-1_8b-reward", help="Reward模型路径")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
