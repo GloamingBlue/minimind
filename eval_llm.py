@@ -63,7 +63,7 @@ def main():
     input_mode = int(input('[0] 自动测试\n[1] 手动输入\n'))
     streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     
-    prompt_iter = prompts if input_mode == 0 else iter(lambda: input('💬: '), '')
+    prompt_iter = prompts if input_mode == 0 else iter(lambda: input('💬: '), '')  # iter(callable, sentinel) 会反复调用前面的函数，直到返回值等于后面的停止值。
     for prompt in prompt_iter:
         setup_seed(2026) # or setup_seed(random.randint(0, 2048))
         if input_mode == 0: print(f'💬: {prompt}')

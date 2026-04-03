@@ -36,7 +36,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
         scaler.scale(loss).backward()
 
-        if (step + 1) % args.accumulation_steps == 0:
+        if step % args.accumulation_steps == 0:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
@@ -111,7 +111,7 @@ if __name__ == "__main__":
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
+    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)  # AMP混合精度会按算子自动选择bf16/fp32，matmul/linear可能用bf16,softmax/norm/reduction可能用float32
     
     # ========== 4. 配wandb ==========
     wandb = None
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         Logger('torch.compile enabled')
     train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
+    scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))  # bf16的指数范围和fp32接近，不需要梯度缩放
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
     
     # ========== 6. 从ckp恢复状态 ==========
@@ -148,14 +148,14 @@ if __name__ == "__main__":
     
     # ========== 8. 开始训练 ==========
     for epoch in range(start_epoch, args.epochs):
-        train_sampler and train_sampler.set_epoch(epoch)
+        train_sampler and train_sampler.set_epoch(epoch)  # 等价于 if train_sampler: train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
         if skip > 0: 
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)
+            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)  # len(loader) + skip代表epoch 完整本来有多少步
         else:
             train_epoch(epoch, loader, len(loader), 0, wandb)
     
