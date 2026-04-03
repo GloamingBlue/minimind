@@ -3,6 +3,7 @@ out
 website/
 docs-minimind/
 MiniMind2/
+minimind-3/
 .vscode
 dataset/minimind_dataset/
 wandb/
