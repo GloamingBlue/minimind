@@ -20,7 +20,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, extract_model_weights, package_model_weights
 from trainer.rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
@@ -285,7 +285,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             raw_actor = actor_model.module if isinstance(actor_model, DistributedDataParallel) else actor_model
             raw_actor = getattr(raw_actor, '_orig_mod', raw_actor)
             actor_state = raw_actor.state_dict()
-            torch.save({k: v.half().cpu() for k, v in actor_state.items()}, ckp)
+            torch.save(package_model_weights(actor_state, lm_config), ckp)
             
             # 使用 lm_checkpoint 保存完整状态（包括 critic）
             lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer, 
@@ -318,6 +318,9 @@ if __name__ == "__main__":
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--residual_mode', default='standard', type=str, choices=['standard', 'full_attn_res', 'block_attn_res'], help="残差模式")
+    parser.add_argument('--attnres_block_size', default=6, type=int, help="Block AttnRes 的 block size")
+    parser.add_argument('--attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="AttnRes 是否启用最终聚合")
     parser.add_argument('--max_seq_len', default=768, type=int, help="Prompt最大长度")
     parser.add_argument("--max_gen_len", type=int, default=1024, help="生成的最大长度")
     parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF数据路径")
@@ -352,7 +355,14 @@ if __name__ == "__main__":
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
+    lm_config = MiniMindConfig(
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        use_moe=bool(args.use_moe),
+        residual_mode=args.residual_mode,
+        attnres_block_size=args.attnres_block_size,
+        attnres_use_final_agg=bool(args.attnres_use_final_agg),
+    )
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
@@ -377,7 +387,7 @@ if __name__ == "__main__":
     ref_model = ref_model.eval().requires_grad_(False)
     moe_suffix = '_moe' if lm_config.use_moe else ''
     ckp = f'{args.save_dir}/{base_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-    state_dict = torch.load(ckp, map_location=args.device)
+    state_dict = extract_model_weights(torch.load(ckp, map_location=args.device), lm_config, ckp)
     critic_model = CriticModel(lm_config)
     critic_model.load_state_dict(state_dict, strict=False)
     critic_model = critic_model.to(args.device)

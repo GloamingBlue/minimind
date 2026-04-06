@@ -6,7 +6,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from model.model_lora import *
-from trainer.trainer_utils import setup_seed, get_model_params
+from trainer.trainer_utils import get_model_params, load_model_weights, setup_seed
 warnings.filterwarnings('ignore')
 
 def init_model(args):
@@ -16,11 +16,14 @@ def init_model(args):
             hidden_size=args.hidden_size,
             num_hidden_layers=args.num_hidden_layers,
             use_moe=bool(args.use_moe),
-            inference_rope_scaling=args.inference_rope_scaling
+            inference_rope_scaling=args.inference_rope_scaling,
+            residual_mode=args.residual_mode,
+            attnres_block_size=args.attnres_block_size,
+            attnres_use_final_agg=bool(args.attnres_use_final_agg),
         ))
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
-        model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)
+        load_model_weights(model, ckp, model.config, device=args.device)
         if args.lora_weight != 'None':
             apply_lora(model)
             load_lora(model, f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth')
@@ -38,6 +41,9 @@ def main():
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--residual_mode', default='standard', type=str, choices=['standard', 'full_attn_res', 'block_attn_res'], help="残差模式")
+    parser.add_argument('--attnres_block_size', default=6, type=int, help="Block AttnRes 的 block size")
+    parser.add_argument('--attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="AttnRes 是否启用最终聚合")
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
     parser.add_argument('--max_new_tokens', default=8192, type=int, help="最大生成长度（注意：并非模型实际长文本能力）")
     parser.add_argument('--temperature', default=0.85, type=float, help="生成温度，控制随机性（0-1，越大越随机）")

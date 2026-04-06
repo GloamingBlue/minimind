@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, package_model_weights
 
 warnings.filterwarnings('ignore')
 
@@ -127,7 +127,7 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
-            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
+            torch.save(package_model_weights(state_dict, lm_config_student), ckp)
             lm_checkpoint(lm_config_student, weight=args.save_weight, model=model, optimizer=optimizer, scaler=scaler, epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints')
             model.train()
             del state_dict
@@ -165,6 +165,12 @@ if __name__ == "__main__":
     parser.add_argument('--teacher_num_layers', default=8, type=int, help="教师模型隐藏层数量")
     parser.add_argument('--student_use_moe', default=0, type=int, choices=[0, 1], help="学生模型是否使用MoE（0=否，1=是）")
     parser.add_argument('--teacher_use_moe', default=1, type=int, choices=[0, 1], help="教师模型是否使用MoE（0=否，1=是）")
+    parser.add_argument('--student_residual_mode', default='standard', type=str, choices=['standard', 'full_attn_res', 'block_attn_res'], help="学生模型残差模式")
+    parser.add_argument('--teacher_residual_mode', default='standard', type=str, choices=['standard', 'full_attn_res', 'block_attn_res'], help="教师模型残差模式")
+    parser.add_argument('--student_attnres_block_size', default=6, type=int, help="学生 Block AttnRes 的 block size")
+    parser.add_argument('--teacher_attnres_block_size', default=6, type=int, help="教师 Block AttnRes 的 block size")
+    parser.add_argument('--student_attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="学生 AttnRes 是否启用最终聚合")
+    parser.add_argument('--teacher_attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="教师 AttnRes 是否启用最终聚合")
     parser.add_argument('--from_student_weight', default='full_sft', type=str, help="学生模型基于哪个权重")
     parser.add_argument('--from_teacher_weight', default='full_sft', type=str, help="教师模型基于哪个权重")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
@@ -182,8 +188,22 @@ if __name__ == "__main__":
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
-    lm_config_student = MiniMindConfig(hidden_size=args.student_hidden_size, num_hidden_layers=args.student_num_layers, use_moe=bool(args.student_use_moe))
-    lm_config_teacher = MiniMindConfig(hidden_size=args.teacher_hidden_size, num_hidden_layers=args.teacher_num_layers, use_moe=bool(args.teacher_use_moe))
+    lm_config_student = MiniMindConfig(
+        hidden_size=args.student_hidden_size,
+        num_hidden_layers=args.student_num_layers,
+        use_moe=bool(args.student_use_moe),
+        residual_mode=args.student_residual_mode,
+        attnres_block_size=args.student_attnres_block_size,
+        attnres_use_final_agg=bool(args.student_attnres_use_final_agg),
+    )
+    lm_config_teacher = MiniMindConfig(
+        hidden_size=args.teacher_hidden_size,
+        num_hidden_layers=args.teacher_num_layers,
+        use_moe=bool(args.teacher_use_moe),
+        residual_mode=args.teacher_residual_mode,
+        attnres_block_size=args.teacher_attnres_block_size,
+        attnres_use_final_agg=bool(args.teacher_attnres_use_final_agg),
+    )
     ckp_data = lm_checkpoint(lm_config_student, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========

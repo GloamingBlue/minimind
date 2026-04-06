@@ -12,7 +12,7 @@ from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from openai import OpenAI
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from trainer.trainer_utils import setup_seed, get_model_params
+from trainer.trainer_utils import setup_seed, get_model_params, load_model_weights
 warnings.filterwarnings('ignore')
 
 TOOLS = [
@@ -57,10 +57,18 @@ TEST_CASES = [
 def init_model(args):
     tokenizer = AutoTokenizer.from_pretrained(args.load_from)
     if 'model' in args.load_from:
-        model = MiniMindForCausalLM(MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe)))
+        lm_config = MiniMindConfig(
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_hidden_layers,
+            use_moe=bool(args.use_moe),
+            residual_mode=args.residual_mode,
+            attnres_block_size=args.attnres_block_size,
+            attnres_use_final_agg=bool(args.attnres_use_final_agg),
+        )
+        model = MiniMindForCausalLM(lm_config)
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
-        model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)
+        load_model_weights(model, ckp, lm_config, device=args.device)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
     get_model_params(model, model.config)
@@ -208,6 +216,9 @@ def main():
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--residual_mode', default='standard', choices=['standard', 'full_attn_res', 'block_attn_res'], type=str, help="残差模式")
+    parser.add_argument('--attnres_block_size', default=6, type=int, help="Block AttnRes的block size")
+    parser.add_argument('--attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="是否启用AttnRes最终聚合")
     parser.add_argument('--max_new_tokens', default=512, type=int, help="最大生成长度")
     parser.add_argument('--temperature', default=0.9, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
     parser.add_argument('--top_p', default=0.9, type=float, help="nucleus采样阈值（0-1）")

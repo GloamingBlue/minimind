@@ -23,7 +23,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoTokenizer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import AgentRLDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, package_model_weights
 from trainer.rollout_engine import create_rollout_engine, compute_per_token_logps
 
 warnings.filterwarnings('ignore')
@@ -353,7 +353,7 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
-            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
+            torch.save(package_model_weights(state_dict, lm_config), ckp)
             lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler)
             model.train()
@@ -385,6 +385,9 @@ if __name__ == "__main__":
     parser.add_argument('--hidden_size', default=768, type=int, help="模型隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="模型层数")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE")
+    parser.add_argument('--residual_mode', default='standard', type=str, choices=['standard', 'full_attn_res', 'block_attn_res'], help="残差模式")
+    parser.add_argument('--attnres_block_size', default=6, type=int, help="Block AttnRes 的 block size")
+    parser.add_argument('--attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="AttnRes 是否启用最终聚合")
     parser.add_argument('--max_seq_len', default=1024, type=int, help="最大序列长度")
     parser.add_argument("--max_gen_len", type=int, default=768, help="单次最大生成长度")
     parser.add_argument("--max_total_len", type=int, default=2500, help="训练侧最终总长度上界")
@@ -414,8 +417,15 @@ if __name__ == "__main__":
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
 
     os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
-                               max_seq_len=args.max_seq_len + args.max_gen_len, use_moe=bool(args.use_moe))
+    lm_config = MiniMindConfig(
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        max_seq_len=args.max_seq_len + args.max_gen_len,
+        use_moe=bool(args.use_moe),
+        residual_mode=args.residual_mode,
+        attnres_block_size=args.attnres_block_size,
+        attnres_use_final_agg=bool(args.attnres_use_final_agg),
+    )
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume == 1 else None
 
     device_type = "cuda" if "cuda" in args.device else "cpu"

@@ -10,15 +10,21 @@ import warnings
 from transformers import AutoTokenizer, AutoModelForCausalLM, Qwen3Config, Qwen3ForCausalLM, Qwen3MoeConfig, Qwen3MoeForCausalLM
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from model.model_lora import apply_lora, merge_lora
+from trainer.trainer_utils import extract_model_weights, package_model_weights
 
 warnings.filterwarnings('ignore', category=UserWarning)
+
+
+def load_local_state_dict(torch_path, config, device):
+    ckpt = torch.load(torch_path, map_location=device)
+    return extract_model_weights(ckpt, config, torch_path)
 
 def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=torch.float16):
     MiniMindConfig.register_for_auto_class()
     MiniMindForCausalLM.register_for_auto_class("AutoModelForCausalLM")
     lm_model = MiniMindForCausalLM(lm_config)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    state_dict = torch.load(torch_path, map_location=device)
+    state_dict = load_local_state_dict(torch_path, lm_config, device)
     lm_model.load_state_dict(state_dict, strict=False)
     lm_model = lm_model.to(dtype)  # 转换模型权重精度
     model_params = sum(p.numel() for p in lm_model.parameters() if p.requires_grad)
@@ -38,8 +44,10 @@ def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=tor
 
 # QwenForCausalLM/LlamaForCausalLM结构兼容生态
 def convert_torch2transformers(torch_path, transformers_path, dtype=torch.float16):
+    if getattr(lm_config, 'residual_mode', 'standard') != 'standard':
+        raise ValueError('Qwen兼容转换仅支持standard残差模式；AttnRes权重请使用 convert_torch2transformers_minimind')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    state_dict = torch.load(torch_path, map_location=device)
+    state_dict = load_local_state_dict(torch_path, lm_config, device)
     common_config = {
         "vocab_size": lm_config.vocab_size,
         "hidden_size": lm_config.hidden_size,
@@ -98,14 +106,19 @@ def convert_torch2transformers(torch_path, transformers_path, dtype=torch.float1
 
 def convert_transformers2torch(transformers_path, torch_path):
     model = AutoModelForCausalLM.from_pretrained(transformers_path, trust_remote_code=True)
-    torch.save({k: v.cpu().half() for k, v in model.state_dict().items()}, torch_path)
+    state_dict = {k: v.cpu().half() for k, v in model.state_dict().items()}
+    if isinstance(model, MiniMindForCausalLM):
+        payload = package_model_weights(state_dict, model.config)
+    else:
+        payload = state_dict
+    torch.save(payload, torch_path)
     print(f"模型已保存为 PyTorch 格式: {torch_path}")
 
 
 def convert_merge_base_lora(base_torch_path, lora_path, merged_torch_path):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     lm_model = MiniMindForCausalLM(lm_config).to(device)
-    state_dict = torch.load(base_torch_path, map_location=device)
+    state_dict = load_local_state_dict(base_torch_path, lm_config, device)
     lm_model.load_state_dict(state_dict, strict=False)
     apply_lora(lm_model)
     merge_lora(lm_model, lora_path, merged_torch_path)

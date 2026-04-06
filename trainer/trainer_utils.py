@@ -60,6 +60,57 @@ def setup_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+def build_weight_meta(lm_config):
+    return {
+        'hidden_size': lm_config.hidden_size,
+        'num_hidden_layers': lm_config.num_hidden_layers,
+        'use_moe': bool(lm_config.use_moe),
+        'residual_mode': getattr(lm_config, 'residual_mode', 'standard'),
+        'attnres_block_size': getattr(lm_config, 'attnres_block_size', None),
+        'attnres_use_final_agg': bool(getattr(lm_config, 'attnres_use_final_agg', True)),
+    }
+
+
+def package_model_weights(state_dict, lm_config):
+    half_state = {k: v.half().cpu() for k, v in state_dict.items()}
+    return {'model': half_state, 'meta': build_weight_meta(lm_config)}
+
+
+def validate_weight_meta(meta, lm_config, weight_path='checkpoint'):
+    expected = build_weight_meta(lm_config)
+    keys_to_check = ['hidden_size', 'num_hidden_layers', 'use_moe', 'residual_mode', 'attnres_use_final_agg']
+    for key in keys_to_check:
+        if meta.get(key) != expected[key]:
+            raise ValueError(
+                f'Checkpoint meta mismatch for {weight_path}: {key}={meta.get(key)} != {expected[key]}'
+            )
+    if lm_config.residual_mode == 'block_attn_res' and meta.get('attnres_block_size') != expected['attnres_block_size']:
+        raise ValueError(
+            f'Checkpoint meta mismatch for {weight_path}: attnres_block_size={meta.get("attnres_block_size")} '
+            f'!= {expected["attnres_block_size"]}'
+        )
+
+
+def extract_model_weights(ckpt, lm_config, weight_path='checkpoint'):
+    if isinstance(ckpt, dict) and 'model' in ckpt:
+        meta = ckpt.get('meta')
+        if meta is not None:
+            validate_weight_meta(meta, lm_config, weight_path)
+        elif lm_config.residual_mode != 'standard':
+            raise ValueError(f'Legacy checkpoint without meta can only be loaded for standard mode: {weight_path}')
+        return ckpt['model']
+    if lm_config.residual_mode != 'standard':
+        raise ValueError(f'Legacy checkpoint without meta can only be loaded for standard mode: {weight_path}')
+    return ckpt
+
+
+def load_model_weights(model, weight_path, lm_config, device='cpu'):
+    ckpt = torch.load(weight_path, map_location=device)
+    weights = extract_model_weights(ckpt, lm_config, weight_path)
+    model.load_state_dict(weights, strict=True)
+    return ckpt
+
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
     moe_path = '_moe' if lm_config.use_moe else ''
@@ -70,9 +121,10 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         raw_model = model.module if isinstance(model, DistributedDataParallel) else model
         raw_model = getattr(raw_model, '_orig_mod', raw_model)
         state_dict = raw_model.state_dict()
-        state_dict = {k: v.half().cpu() for k, v in state_dict.items()}
+        weight_payload = package_model_weights(state_dict, lm_config)
+        state_dict = weight_payload['model']
         ckp_tmp = ckp_path + '.tmp'
-        torch.save(state_dict, ckp_tmp)
+        torch.save(weight_payload, ckp_tmp)
         os.replace(ckp_tmp, ckp_path)
         wandb_id = None
         if wandb:
@@ -88,7 +140,8 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
             'epoch': epoch,
             'step': step,
             'world_size': dist.get_world_size() if dist.is_initialized() else 1,
-            'wandb_id': wandb_id
+            'wandb_id': wandb_id,
+            'meta': build_weight_meta(lm_config)
         }
         for key, value in kwargs.items():
             if value is not None:
@@ -107,6 +160,11 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
     else:  # 加载模式
         if os.path.exists(resume_path):
             ckp_data = torch.load(resume_path, map_location='cpu')
+            meta = ckp_data.get('meta')
+            if meta is not None:
+                validate_weight_meta(meta, lm_config, resume_path)
+            elif lm_config.residual_mode != 'standard':
+                raise ValueError(f'Legacy resume checkpoint without meta can only be loaded for standard mode: {resume_path}')
             saved_ws = ckp_data.get('world_size', 1)
             current_ws = dist.get_world_size() if dist.is_initialized() else 1
             if saved_ws != current_ws:
@@ -123,8 +181,10 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', sav
     if from_weight!= 'none':
         moe_suffix = '_moe' if lm_config.use_moe else ''
         weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-        weights = torch.load(weight_path, map_location=device)
-        model.load_state_dict(weights, strict=False)
+        Logger(f'Loaded from: {weight_path}')
+        load_model_weights(model, weight_path, lm_config, device=device)
+    else:
+        Logger('Loaded from: none (training from scratch)')
 
     get_model_params(model, lm_config)
     Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')

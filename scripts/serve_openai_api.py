@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from model.model_lora import apply_lora, load_lora
+from trainer.trainer_utils import load_model_weights
 
 warnings.filterwarnings('ignore')
 
@@ -30,14 +31,18 @@ def init_model(args):
     if 'model' in args.load_from:
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = f'../{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
-        model = MiniMindForCausalLM(MiniMindConfig(
+        lm_config = MiniMindConfig(
             hidden_size=args.hidden_size,
             num_hidden_layers=args.num_hidden_layers,
             max_seq_len=args.max_seq_len,
             use_moe=bool(args.use_moe),
-            inference_rope_scaling=args.inference_rope_scaling
-        ))
-        model.load_state_dict(torch.load(ckp, map_location=device), strict=True)
+            inference_rope_scaling=args.inference_rope_scaling,
+            residual_mode=args.residual_mode,
+            attnres_block_size=args.attnres_block_size,
+            attnres_use_final_agg=bool(args.attnres_use_final_agg),
+        )
+        model = MiniMindForCausalLM(lm_config)
+        load_model_weights(model, ckp, lm_config, device=device)
         if args.lora_weight != 'None':
             apply_lora(model)
             load_lora(model, f'../{args.save_dir}/lora/{args.lora_weight}_{args.hidden_size}.pth')
@@ -238,6 +243,9 @@ if __name__ == "__main__":
     parser.add_argument('--max_seq_len', default=8192, type=int, help="最大序列长度")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
+    parser.add_argument('--residual_mode', default='standard', choices=['standard', 'full_attn_res', 'block_attn_res'], type=str, help="残差模式")
+    parser.add_argument('--attnres_block_size', default=6, type=int, help="Block AttnRes的block size")
+    parser.add_argument('--attnres_use_final_agg', default=1, type=int, choices=[0, 1], help="是否启用AttnRes最终聚合")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
     args = parser.parse_args()
     device = args.device
