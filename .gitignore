@@ -9,3 +9,4 @@ dataset/minimind_dataset/
 wandb/
 checkpoints/
 internlm2-1_8b-reward/
+TODO.md
