@@ -61,5 +61,5 @@ def merge_lora(model, lora_path, save_path):
         if isinstance(module, nn.Linear) and '.lora.' not in name:
             state_dict[f'{name}.weight'] = module.weight.data.clone().cpu().half()
             if hasattr(module, 'lora'):
-                state_dict[f'{name}.weight'] += (module.lora.B.weight.data @ module.lora.A.weight.data).cpu().half()
+                state_dict[f'{name}.weight'] += (module.lora.B.weight.data @ module.lora.A.weight.data).cpu().half()  # merge也是使用B @ A, (out, in)
     torch.save(state_dict, save_path)
