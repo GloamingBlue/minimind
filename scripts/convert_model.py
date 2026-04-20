@@ -15,6 +15,37 @@ from trainer.trainer_utils import extract_model_weights, package_model_weights
 warnings.filterwarnings('ignore', category=UserWarning)
 
 
+def print_conversion_config(config):
+    print("Conversion config:")
+    print(f"  hidden_size={config.hidden_size}")
+    print(f"  num_hidden_layers={config.num_hidden_layers}")
+    print(f"  use_moe={config.use_moe}")
+    print(f"  residual_mode={getattr(config, 'residual_mode', 'standard')}")
+    print(f"  attnres_block_size={getattr(config, 'attnres_block_size', None)}")
+    print(f"  attnres_use_final_agg={getattr(config, 'attnres_use_final_agg', True)}")
+
+
+def apply_checkpoint_meta_to_config(torch_path, config, device='cpu'):
+    ckpt = torch.load(torch_path, map_location=device)
+    meta = ckpt.get('meta') if isinstance(ckpt, dict) else None
+    if not meta:
+        print("Checkpoint meta: none, using script config")
+        print_conversion_config(config)
+        return config
+
+    config.hidden_size = meta.get('hidden_size', config.hidden_size)
+    config.num_hidden_layers = meta.get('num_hidden_layers', config.num_hidden_layers)
+    config.use_moe = meta.get('use_moe', config.use_moe)
+    config.residual_mode = meta.get('residual_mode', getattr(config, 'residual_mode', 'standard'))
+    config.attnres_block_size = meta.get('attnres_block_size', getattr(config, 'attnres_block_size', 6))
+    config.attnres_use_final_agg = meta.get(
+        'attnres_use_final_agg', getattr(config, 'attnres_use_final_agg', True)
+    )
+    print("Checkpoint meta: loaded and applied")
+    print_conversion_config(config)
+    return config
+
+
 def load_local_state_dict(torch_path, config, device):
     ckpt = torch.load(torch_path, map_location=device)
     return extract_model_weights(ckpt, config, torch_path)
@@ -22,6 +53,7 @@ def load_local_state_dict(torch_path, config, device):
 def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=torch.float16):
     MiniMindConfig.register_for_auto_class()
     MiniMindForCausalLM.register_for_auto_class("AutoModelForCausalLM")
+    apply_checkpoint_meta_to_config(torch_path, lm_config)
     lm_model = MiniMindForCausalLM(lm_config)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     state_dict = load_local_state_dict(torch_path, lm_config, device)
@@ -44,6 +76,7 @@ def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=tor
 
 # QwenForCausalLM/LlamaForCausalLM结构兼容生态
 def convert_torch2transformers(torch_path, transformers_path, dtype=torch.float16):
+    apply_checkpoint_meta_to_config(torch_path, lm_config)
     if getattr(lm_config, 'residual_mode', 'standard') != 'standard':
         raise ValueError('Qwen兼容转换仅支持standard残差模式；AttnRes权重请使用 convert_torch2transformers_minimind')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -117,6 +150,7 @@ def convert_transformers2torch(transformers_path, torch_path):
 
 def convert_merge_base_lora(base_torch_path, lora_path, merged_torch_path):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    apply_checkpoint_meta_to_config(base_torch_path, lm_config, device)
     lm_model = MiniMindForCausalLM(lm_config).to(device)
     state_dict = load_local_state_dict(base_torch_path, lm_config, device)
     lm_model.load_state_dict(state_dict, strict=False)
@@ -139,11 +173,19 @@ def convert_json_to_jinja(json_file_path, output_path):
 
 
 if __name__ == '__main__':
-    lm_config = MiniMindConfig(hidden_size=768, num_hidden_layers=8, max_seq_len=8192, use_moe=False)
+    lm_config = MiniMindConfig(
+        hidden_size=768,
+        num_hidden_layers=16,
+        max_seq_len=8192,
+        use_moe=False,
+        residual_mode="block_attn_res",
+        attnres_block_size=8,
+        attnres_use_final_agg=True,
+    )
     # convert torch to transformers
-    torch_path = f"../out/full_sft_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth"
-    transformers_path = '../minimind-3'
-    convert_torch2transformers(torch_path, transformers_path)
+    torch_path = f"../out/dpo_block_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth"
+    transformers_path = '../minimind-block'
+    convert_torch2transformers_minimind(torch_path, transformers_path)
 
     # # merge lora
     # base_torch_path = f"../out/full_sft_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth"

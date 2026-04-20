@@ -30,6 +30,7 @@ class MiniMindConfig(PretrainedConfig):
         self.use_moe = use_moe
         self.dropout = kwargs.get("dropout", 0.0)
         self.vocab_size = kwargs.get("vocab_size", 6400)
+        self.tie_word_embeddings = kwargs.get("tie_word_embeddings", True)
         self.bos_token_id = kwargs.get("bos_token_id", 1)
         self.eos_token_id = kwargs.get("eos_token_id", 2)
         self.flash_attn = kwargs.get("flash_attn", True)
@@ -480,13 +481,26 @@ class MiniMindModel(nn.Module):
 
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = MiniMindConfig
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
 
     def __init__(self, config: MiniMindConfig = None):
         self.config = config or MiniMindConfig()
         super().__init__(self.config)
         self.model = MiniMindModel(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
-        self.model.embed_tokens.weight = self.lm_head.weight
+        self.tie_weights()
+
+    def get_input_embeddings(self):
+        return self.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.model.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
         hidden_states, past_key_values, aux_loss = self.model(
