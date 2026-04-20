@@ -5,6 +5,7 @@ docs-minimind/
 MiniMind2/
 minimind-3/
 minimind-block/
+sglang_ckpt_grpo/
 .vscode
 dataset/minimind_dataset/
 wandb/
