@@ -1,5 +1,5 @@
 """Rollout Engine - 可插拔的推理引擎
-python -m sglang.launch_server --model-path ./minimind-3 --attention-backend triton --host 0.0.0.0 --port 8998
+python -m sglang.launch_server --model-path ./minimind-block --trust-remote-code --attention-backend triton --host 0.0.0.0 --port 8998
 """
 import os
 import sys

@@ -69,6 +69,10 @@ def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=tor
         tokenizer_config_path, config_path = os.path.join(transformers_path, "tokenizer_config.json"), os.path.join(transformers_path, "config.json")
         json.dump({**json.load(open(tokenizer_config_path, 'r', encoding='utf-8')), "tokenizer_class": "PreTrainedTokenizerFast", "extra_special_tokens": {}}, open(tokenizer_config_path, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
         config = json.load(open(config_path, 'r', encoding='utf-8'))
+        auto_map = config.get('auto_map', {})
+        if 'AutoModel' not in auto_map:
+            auto_map['AutoModel'] = "model_minimind.MiniMindForCausalLM"
+        config['auto_map'] = auto_map
         config['rope_theta'] = lm_config.rope_theta; config['rope_scaling'] = None; del config['rope_parameters']
         json.dump(config, open(config_path, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
     print(f"模型已保存为 Transformers-MiniMind 格式: {transformers_path}")
