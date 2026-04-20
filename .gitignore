@@ -4,6 +4,7 @@ website/
 docs-minimind/
 MiniMind2/
 minimind-3/
+minimind-block/
 .vscode
 dataset/minimind_dataset/
 wandb/
